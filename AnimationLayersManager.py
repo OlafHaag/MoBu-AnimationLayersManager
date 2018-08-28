@@ -176,6 +176,25 @@ def set_timespan(num_frames):
     stop_frame = start_frame + num_frames
     curr_take.LocalTimeSpan = FBTimeSpan(FBSystem().LocalTime,
                                          FBTime(0, 0, 0, stop_frame, 0))
+
+
+def shift_timespan(take, offset, offset_stop=None):
+    """Offsets the take's time span by a certain amount of time.
+    :param take: The take on which to act.
+    :type take: FBTake
+    :param offset: The amount of time to offset.
+    :type offset: FBTime
+    :param offset_stop: Separate offset value for end of frame range.
+    :type offset_stop: FBTime
+    """
+    if not offset_stop:
+        offset_stop = offset
+    start = take.LocalTimeSpan.GetStart() + offset
+    stop = take.LocalTimeSpan.GetStop() + offset_stop
+    if start >= stop:
+        FBMessageBox("Error", "start >= stop!\n{}".format(take.Name), "OK")
+    else:
+        take.LocalTimeSpan = FBTimeSpan(start, stop)
     
     
 ###############################################################
@@ -190,6 +209,7 @@ def populate_tool(main_layout):
                    nodes_dst=OrderedDict(),  # Which destination tree nodes connect to which takes.
                    start_frame=0,
                    stop_frame=100,
+                   relative=False,
                    render_format="mov",
                    )
     
@@ -197,7 +217,7 @@ def populate_tool(main_layout):
     
     # Start frame for LocalTimeSpan
     start_edit = FBEditNumber()
-    start_edit.Min = 0
+    #start_edit.Min = 0
     start_edit.Max = nl.stop_frame - 1
     start_edit.Precision = 1
     start_edit.SmallStep = 1
@@ -248,7 +268,7 @@ def populate_tool(main_layout):
     tree_dst.ShowLines = True
     
     def reload_src_tree():
-        """Populate tree view with takes an their animation layers."""
+        """Populate tree view with takes and their animation layers."""
         tree_src.Clear()
         nl.nodes_src.clear()
         root = tree_src.GetRoot()
@@ -302,6 +322,7 @@ def populate_tool(main_layout):
     #******************'''
     def transfer_anim_layers():
         """Copies checked animation layers from source panel to checked takes in destination panel."""
+        # Todo: Use FBFCurve's KeyReplaceBy method?
         # Todo: Whew, that's quite a number of nested for-loops. Is it possible to make this more efficient?
         for src_node, values in nl.nodes_src.iteritems():
             # For keeping the order of layers on creation (per take),
@@ -715,22 +736,42 @@ def populate_tool(main_layout):
         """When start frame value is changed, make sure the stop value can't go lower."""
         value = control.Value
         nl.start_frame = value
-        stop_edit.Min = value + 1
+        if not nl.relative:
+            stop_edit.Min = value + 1
     
     def on_stop_changed_callback(control, event):
         """When stop frame value is changed, make sure the start value can't go higher."""
         value = control.Value
         nl.stop_frame = value
-        start_edit.Max = value - 1
+        if not nl.relative:
+            start_edit.Max = value - 1
         
+    def relative_checkbox_callback(control, event):
+        """Update the non local relative variable."""
+        btn_state = control.State
+        nl.relative = btn_state
+        if nl.relative:
+            start_edit.Max = float('inf')
+            #start_edit.Min = float('-inf')
+            stop_edit.Min = float('-inf')
+        else:
+            start_edit.Max = nl.stop_frame - 1
+            stop_edit.Min = nl.start_frame + 1
+
     def set_framerange_btn_callback(control, event):
         """Set LocalTimeSpan of checked takes."""
         for node, take in nl.nodes_dst.iteritems():
             if node.Checked:
-                take.LocalTimeSpan = FBTimeSpan(
-                    FBTime(0, 0, 0, int(nl.start_frame), 0),
-                    FBTime(0, 0, 0, int(nl.stop_frame), 0),
-                )
+                if nl.relative:
+                    shift_timespan(take,offset=FBTime(0, 0, 0, int(nl.start_frame), 0),
+                                   offset_stop=FBTime(0, 0, 0, int(nl.stop_frame), 0))
+                else:
+                    start = FBTime(0, 0, 0, int(nl.start_frame), 0)
+                    stop = FBTime(0, 0, 0, int(nl.stop_frame), 0)
+                    if start >= stop:
+                        FBMessageBox("Error", "start >= stop!", "OK")
+                        break
+                    take.LocalTimeSpan = FBTimeSpan(start, stop)
     
     def on_format_change(control, event):
         """Sets the output format for rendering."""
@@ -999,12 +1040,19 @@ def populate_tool(main_layout):
     buttons_row.Add(label, 30)
     stop_edit.OnChange.Add(on_stop_changed_callback)
     buttons_row.AddRelative(stop_edit, 0.2)
+    # Relative shift checkbox for LocalTimeSpan
+    btn = FBButton()
+    btn.Caption = "Relative"
+    btn.Style = FBButtonStyle.kFBCheckbox
+    btn.Justify = FBTextJustify.kFBTextJustifyLeft
+    btn.OnClick.Add(relative_checkbox_callback)
+    buttons_row.AddRelative(btn, 0.2)
     # Set start&stop button
     btn = FBButton()
     btn.Caption = "Set"
     btn.OnClick.Add(set_framerange_btn_callback)
-    buttons_row.AddRelative(btn, 0.2)
-
+    buttons_row.AddRelative(btn, 0.3)
+    
     # Create a bottom button row3.
     buttons_row = FBHBoxLayout(FBAttachType.kFBAttachLeft)
     column.AddRelative(buttons_row, 0.1)
